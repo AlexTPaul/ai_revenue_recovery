@@ -8,6 +8,7 @@ export function ChatDrawer({ promiseId, onClose, onRefreshState }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   const [lastExtraction, setLastExtraction] = useState(null);
+  const [language, setLanguage] = useState('hinglish'); // 'hinglish' | 'english'
   const messagesEndRef = useRef(null);
 
   const fetchHistory = () => {
@@ -42,7 +43,7 @@ export function ChatDrawer({ promiseId, onClose, onRefreshState }) {
     setSending(true);
     setError(null);
     try {
-      const res = await api.sendMessage(promiseId, text);
+      const res = await api.sendMessage(promiseId, text, language);
       setInputMessage('');
       setLastExtraction(res.extracted_data);
       await fetchHistory();
@@ -58,7 +59,6 @@ export function ChatDrawer({ promiseId, onClose, onRefreshState }) {
     if (!history?.payment_link) return;
     setSending(true);
     try {
-      // Simulate Razorpay payment_link.paid webhook
       const plinkId = history.payment_link.split('/').pop();
       await api.simulateRazorpayWebhook({
         event: 'payment_link.paid',
@@ -81,12 +81,21 @@ export function ChatDrawer({ promiseId, onClose, onRefreshState }) {
     }
   };
 
-  const quickReplies = [
-    { label: 'Definite Date (Next Monday)', text: 'Agle somvar pakka pay kar dunga' },
-    { label: 'Payday (5th Date)', text: 'Bhai 5 tareekh ko salary aayegi tab pakka dunga' },
-    { label: 'Vague / Ambiguous (Test Gate)', text: 'Jaldi hi de dunga bhai thoda time do' },
-    { label: 'Explicit Refusal (Test Escalation)', text: 'Nahi dunga, subscription cancel karo' },
+  const quickRepliesHinglish = [
+    { label: 'Definite Date (Somvar)', text: 'Agle somvar pakka pay kar dunga' },
+    { label: 'Payday (5th Tareekh)', text: 'Bhai 5 tareekh ko salary aayegi tab pakka dunga' },
+    { label: 'Vague / Ambiguous (Gate Test)', text: 'Jaldi hi de dunga bhai thoda time do' },
+    { label: 'Explicit Refusal (Escalation Test)', text: 'Nahi dunga, subscription cancel karo' },
   ];
+
+  const quickRepliesEnglish = [
+    { label: 'Definite Date (Next Monday)', text: 'I will pay next Monday for sure' },
+    { label: 'Payday (5th of Month)', text: 'I will pay on the 5th once my salary is credited' },
+    { label: 'Vague / Ambiguous (Gate Test)', text: 'I will pay soon, please give me a few days' },
+    { label: 'Explicit Refusal (Escalation Test)', text: 'I will not pay, please cancel my subscription' },
+  ];
+
+  const quickReplies = language === 'english' ? quickRepliesEnglish : quickRepliesHinglish;
 
   const formatINR = (val) => {
     return new Intl.NumberFormat('en-IN', {
@@ -106,10 +115,31 @@ export function ChatDrawer({ promiseId, onClose, onRefreshState }) {
               {history?.customer_name || 'Customer'} &bull; {history?.customer_phone} &bull; Due: {formatINR(history?.amount)}
             </div>
           </div>
-          <button className="btn btn-subtle btn-sm" onClick={onClose}>
-            Close
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className="tabs-nav" style={{ padding: '2px' }}>
+              <button
+                className={`tab-btn ${language === 'hinglish' ? 'active' : ''}`}
+                style={{ fontSize: '11px', padding: '3px 8px' }}
+                onClick={() => setLanguage('hinglish')}
+                type="button"
+              >
+                Hinglish
+              </button>
+              <button
+                className={`tab-btn ${language === 'english' ? 'active' : ''}`}
+                style={{ fontSize: '11px', padding: '3px 8px' }}
+                onClick={() => setLanguage('english')}
+                type="button"
+              >
+                English
+              </button>
+            </div>
+            <button className="btn btn-subtle btn-sm" onClick={onClose}>
+              Close
+            </button>
+          </div>
         </div>
+
 
         <div className="drawer-body chat-container">
           {/* Status & Commitment Info */}
@@ -212,8 +242,11 @@ export function ChatDrawer({ promiseId, onClose, onRefreshState }) {
                   ? 'Conversation ended (Escalated to human)'
                   : history?.status === 'kept'
                   ? 'Payment completed (Promise kept)'
-                  : 'Type custom Hinglish response (e.g. Kal shaam tak)...'
+                  : language === 'english'
+                  ? 'Type response in English (e.g. I will pay tomorrow morning)...'
+                  : 'Type response in Hinglish (e.g. Kal shaam tak de dunga)...'
               }
+
               className="chat-input"
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}

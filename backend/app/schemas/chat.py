@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict
 class ChatMessageRequest(BaseModel):
     promise_id: str
     message: str
+    language: Optional[str] = "hinglish"  # "english" | "hinglish"
+
 
 
 class ParsedCommitment(BaseModel):

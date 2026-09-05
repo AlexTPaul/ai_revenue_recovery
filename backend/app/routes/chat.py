@@ -46,13 +46,16 @@ def handle_customer_message(payload: ChatMessageRequest, db: Session = Depends(g
     )
     db.add(customer_log)
 
+    language = (payload.language or "hinglish").lower()
+    is_english = (language == "english")
+
     # Check if a clarification was previously asked in this conversation
     clarification_count = (
         db.query(ConversationLog)
         .filter(
             ConversationLog.promise_id == promise.id,
             ConversationLog.sender == "agent",
-            ConversationLog.message.like("%anumaanit tareekh%"),
+            (ConversationLog.message.like("%anumaanit tareekh%") | ConversationLog.message.like("%estimated payment date%")),
         )
         .count()
     )
@@ -64,6 +67,7 @@ def handle_customer_message(payload: ChatMessageRequest, db: Session = Depends(g
         amount=promise.amount,
         customer_name=customer.name,
         prior_clarification_asked=(clarification_count > 0),
+        language=language,
     )
 
     agent_reply = ""
@@ -85,10 +89,18 @@ def handle_customer_message(payload: ChatMessageRequest, db: Session = Depends(g
         promise.payment_link_id = plink["id"]
         payment_link_url = plink["short_url"]
 
-        agent_reply = (
-            f"Shukriya {customer.name} ji! Humne {parsed.promised_date.strftime('%d %B, %Y')} ka promise note kar liya hai. "
-            f"Aap is link se kisi bhi samay payment complete kar sakte hain: {payment_link_url}"
-        )
+        if is_english:
+            agent_reply = (
+                parsed.confirmation_message
+                or f"Thank you {customer.name}! We have recorded your payment commitment for {parsed.promised_date.strftime('%d %B, %Y')}. "
+                   f"You can complete your payment anytime using this secure link: {payment_link_url}"
+            )
+        else:
+            agent_reply = (
+                parsed.confirmation_message
+                or f"Shukriya {customer.name} ji! Humne {parsed.promised_date.strftime('%d %B, %Y')} ka promise note kar liya hai. "
+                   f"Aap is link se kisi bhi samay payment complete kar sakte hain: {payment_link_url}"
+            )
 
         # Log to Audit
         audit = AuditLog(
@@ -105,17 +117,29 @@ def handle_customer_message(payload: ChatMessageRequest, db: Session = Depends(g
 
     elif parsed.is_ambiguous:
         if clarification_count == 0:
-            agent_reply = (
-                parsed.clarification_message
-                or f"Dhanyawad {customer.name} ji! Kya aap koi anumaanit tareekh bata sakte hain taaki hum tab tak link active rakhein?"
-            )
+            if is_english:
+                agent_reply = (
+                    parsed.clarification_message
+                    or f"Thank you {customer.name}! Could you please provide an estimated payment date so we can keep your link active?"
+                )
+            else:
+                agent_reply = (
+                    parsed.clarification_message
+                    or f"Dhanyawad {customer.name} ji! Kya aap koi anumaanit tareekh bata sakte hain taaki hum tab tak link active rakhein?"
+                )
         else:
             # Single clarification gate exceeded -> escalate
             promise.status = "escalated"
-            agent_reply = (
-                f"Samajh gaya {customer.name} ji. Humne aapka case support team ko handoff kar diya hai. "
-                "Hamare executive aapse call par sampark karenge."
-            )
+            if is_english:
+                agent_reply = (
+                    f"Understood {customer.name}. We have escalated your case to our support team. "
+                    "A representative will contact you shortly."
+                )
+            else:
+                agent_reply = (
+                    f"Samajh gaya {customer.name} ji. Humne aapka case support team ko handoff kar diya hai. "
+                    "Hamare executive aapse call par sampark karenge."
+                )
             audit = AuditLog(
                 id=f"aud_{uuid.uuid4().hex[:8]}",
                 entity_type="promise_to_pay",
@@ -130,10 +154,16 @@ def handle_customer_message(payload: ChatMessageRequest, db: Session = Depends(g
 
     elif parsed.refused:
         promise.status = "escalated"
-        agent_reply = (
-            f"Dhanyawad {customer.name} ji. Aapki request note kar li gayi hai. "
-            "Hum is mandate ko pause kar rahe hain aur hamari team aapse sampark karegi."
-        )
+        if is_english:
+            agent_reply = (
+                f"Thank you {customer.name}. Your request has been noted. "
+                "We have paused automated retries and our support team will contact you."
+            )
+        else:
+            agent_reply = (
+                f"Dhanyawad {customer.name} ji. Aapki request note kar li gayi hai. "
+                "Hum is mandate ko pause kar rahe hain aur hamari team aapse sampark karegi."
+            )
         audit = AuditLog(
             id=f"aud_{uuid.uuid4().hex[:8]}",
             entity_type="promise_to_pay",
@@ -145,6 +175,7 @@ def handle_customer_message(payload: ChatMessageRequest, db: Session = Depends(g
             amount_recovered=None,
         )
         db.add(audit)
+
 
     # 3. Log agent reply
     agent_log = ConversationLog(

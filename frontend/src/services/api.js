@@ -69,11 +69,12 @@ export const api = {
     }),
 
   // Chat (Promise-to-Pay)
-  sendMessage: (promiseId, message) =>
+  sendMessage: (promiseId, message, language = 'hinglish') =>
     request('/chat/message', {
       method: 'POST',
-      body: JSON.stringify({ promise_id: promiseId, message }),
+      body: JSON.stringify({ promise_id: promiseId, message, language }),
     }),
+
 
   getChatHistory: (promiseId) => request(`/chat/${promiseId}/history`),
 

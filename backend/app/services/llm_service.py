@@ -19,27 +19,30 @@ class LLMService:
         current_date: date,
         amount: float,
         customer_name: str = "Customer",
-        prior_clarification_asked: bool = False
+        prior_clarification_asked: bool = False,
+        language: str = "hinglish",
     ) -> ParsedCommitment:
         """
         Parses customer message in English/Hindi/Hinglish to extract structured payment commitment.
         Uses live LLM if API key is provided; otherwise uses intelligent heuristic NLU parser.
+        Supports both 'english' and 'hinglish' output response styles.
         """
         # Try live LLM if key is configured
         if self.openai_key:
             try:
-                return self._parse_with_openai(message, current_date, amount, customer_name)
+                return self._parse_with_openai(message, current_date, amount, customer_name, language)
             except Exception:
                 pass
 
         if self.gemini_key:
             try:
-                return self._parse_with_gemini(message, current_date, amount, customer_name)
+                return self._parse_with_gemini(message, current_date, amount, customer_name, language)
             except Exception:
                 pass
 
         # Robust Heuristic / Rule-based NLP Parser (Works 100% offline)
-        return self._heuristic_hinglish_parser(message, current_date, amount, customer_name, prior_clarification_asked)
+        return self._heuristic_hinglish_parser(message, current_date, amount, customer_name, prior_clarification_asked, language)
+
 
     def _heuristic_hinglish_parser(
         self,
@@ -47,13 +50,14 @@ class LLMService:
         current_date: date,
         amount: float,
         customer_name: str,
-        prior_clarification_asked: bool
+        prior_clarification_asked: bool,
+        language: str = "hinglish"
     ) -> ParsedCommitment:
         text = message.lower().strip()
 
         # 1. Refusal Detection
         refusal_patterns = [
-            r"\b(nahi|nahi dunga|nahi dungi|cancel|band karo|fraud|mat karo|no way|wont pay|won't pay|don't charge)\b"
+            r"\b(nahi|nahi dunga|nahi dungi|cancel|band karo|fraud|mat karo|no way|wont pay|won't pay|don't charge|do not charge|refuse)\b"
         ]
         for pat in refusal_patterns:
             if re.search(pat, text):
@@ -69,12 +73,11 @@ class LLMService:
 
         # 2. Ambiguity Detection (e.g. "soon", "jaldi", "baad me", "de dunga")
         ambiguous_patterns = [
-            r"\b(jaldi|thode din|baad me|baad mein|dekhunga|dekhte hain|soon|later|kuch din|aane do|karta hu|karti hu|de dunga|de dungi|koshish|try karunga)\b"
+            r"\b(jaldi|thode din|baad me|baad mein|dekhunga|dekhte hain|soon|later|kuch din|aane do|karta hu|karti hu|de dunga|de dungi|koshish|try karunga|will pay soon|some time|few days)\b"
         ]
         is_potentially_vague = any(re.search(pat, text) for pat in ambiguous_patterns)
 
         # 3. Explicit Date Match: e.g. "5th", "5 tareekh", "5 ko", "05/09", "2026-09-05"
-        # Match day of month: "5 tareekh", "5 ko", "5th sep", "5th"
         day_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:tareekh|tarikh|ko|date|september|sep|october|oct|august|aug)?\b", text)
         iso_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
         slash_match = re.search(r"\b(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b", text)
@@ -127,7 +130,6 @@ class LLMService:
         if not target_date and day_match:
             day_num = int(day_match.group(1))
             if 1 <= day_num <= 31:
-                # If day is greater than current day, it's this month; otherwise next month
                 if day_num >= current_date.day:
                     try:
                         target_date = date(current_date.year, current_date.month, day_num)
@@ -142,8 +144,16 @@ class LLMService:
                         target_date = date(next_y, next_m, 28)
 
         # Evaluate if commitment is definite or ambiguous
+        is_english = (language.lower() == "english")
         if target_date:
             formatted_date = target_date.strftime("%d %B, %Y")
+            confirmation_msg = (
+                f"Thank you {customer_name}! We have recorded your payment commitment for {formatted_date}. "
+                f"You can complete your payment anytime using this secure link."
+                if is_english
+                else f"Shukriya {customer_name} ji! Humne {formatted_date} ka promise note kar liya hai. "
+                     f"Aap is payment link se kisi bhi samay payment complete kar sakte hain."
+            )
             return ParsedCommitment(
                 has_commitment=True,
                 is_ambiguous=False,
@@ -151,27 +161,29 @@ class LLMService:
                 refused=False,
                 confidence=0.92,
                 clarification_message=None,
-                confirmation_message=(
-                    f"Shukriya {customer_name} ji! Humne {formatted_date} ka promise note kar liya hai. "
-                    f"Aap is payment link se kisi bhi samay payment complete kar sakte hain."
-                )
+                confirmation_message=confirmation_msg
             )
 
         # If vague or ambiguous and no date could be extracted
         if is_potentially_vague or not target_date:
             sample_date = (current_date + timedelta(days=3)).strftime("%d %B")
+            clarification_msg = (
+                f"Thank you {customer_name}! Could you please provide an estimated payment date "
+                f"(such as {sample_date} or next Monday) so we can keep your link active?"
+                if is_english
+                else f"Dhanyawad {customer_name} ji! Kya aap koi anumaanit tareekh bata sakte hain "
+                     f"(jaise ki {sample_date} ya agle Somvar) taaki hum tab tak link active rakhein?"
+            )
             return ParsedCommitment(
                 has_commitment=False,
                 is_ambiguous=True,
                 promised_date=None,
                 refused=False,
                 confidence=0.85,
-                clarification_message=(
-                    f"Dhanyawad {customer_name} ji! Kya aap koi anumaanit tareekh bata sakte hain "
-                    f"(jaise ki {sample_date} ya agle Somvar) taaki hum tab tak link active rakhein?"
-                ),
+                clarification_message=clarification_msg,
                 confirmation_message=None
             )
+
 
     def _next_weekday(self, current_date: date, target_weekday: int) -> date:
         """Returns the next occurrence of the given weekday (0=Monday, 6=Sunday)."""
@@ -233,23 +245,25 @@ class LLMService:
         else:
             return f"Action '{action}' executed for entity under standard operating recovery policy."
 
-    def _parse_with_openai(self, message: str, current_date: date, amount: float, customer_name: str) -> ParsedCommitment:
+    def _parse_with_openai(self, message: str, current_date: date, amount: float, customer_name: str, language: str = "hinglish") -> ParsedCommitment:
         # Implementation when OpenAI key is present
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.openai_key}",
             "Content-Type": "application/json"
         }
+        lang_instruction = "English" if language.lower() == "english" else "Hinglish (Hindi-English mix)"
         prompt = (
             f"Current Date: {current_date.isoformat()}\n"
             f"Customer Message: '{message}'\n"
             f"Due Amount: ₹{amount}\n"
+            f"Target Response Language: {lang_instruction}\n"
             "Extract structured commitment JSON: {has_commitment: bool, is_ambiguous: bool, promised_date: 'YYYY-MM-DD'|null, refused: bool, clarification_message: str|null, confirmation_message: str|null}"
         )
         payload = {
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": "You are a Hinglish payment promise extractor. Output JSON only."},
+                {"role": "system", "content": f"You are a payment promise extractor. Output JSON only. Messages must be in {lang_instruction}."},
                 {"role": "user", "content": prompt}
             ],
             "response_format": {"type": "json_object"}
@@ -270,34 +284,60 @@ class LLMService:
                 )
         raise RuntimeError("OpenAI parsing failed")
 
-    def _parse_with_gemini(self, message: str, current_date: date, amount: float, customer_name: str) -> ParsedCommitment:
-        # Implementation when Gemini key is present
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.gemini_key}"
+    def _parse_with_gemini(self, message: str, current_date: date, amount: float, customer_name: str, language: str = "hinglish") -> ParsedCommitment:
+        api_key = self.gemini_key or settings.GEMINI_API_KEY
+        if not api_key:
+            raise RuntimeError("Gemini API key not configured")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        lang_style = "professional, polite English" if language.lower() == "english" else "courteous Hinglish (Hindi-English mix)"
         prompt = (
-            f"Current Date: {current_date.isoformat()}\n"
-            f"Customer Message: '{message}'\n"
-            f"Extract JSON: {{has_commitment: bool, is_ambiguous: bool, promised_date: 'YYYY-MM-DD'|null, refused: bool, clarification_message: str|null, confirmation_message: str|null}}"
+            f"You are a strict, compliant AI financial assistant parsing a recurring payment customer message in English or Hinglish.\n"
+            f"Today's Date: {current_date.isoformat()}\n"
+            f"Customer Name: {customer_name}\n"
+            f"Due Amount: INR {amount}\n"
+            f"Customer Message: \"{message}\"\n"
+            f"Required Output Language for Messages: {lang_style}\n\n"
+            "Task: Extract structured payment commitment details as JSON with exactly these keys:\n"
+            "- has_commitment (boolean): true if customer committed to a specific date or relative day (e.g. tomorrow, next monday, kal, parso, 5th, agle somvar).\n"
+            "- is_ambiguous (boolean): true if customer was vague without a clear date (e.g. soon, later, few days, jaldi, baad me, dekhunga, karta hu).\n"
+            "- promised_date (string YYYY-MM-DD or null): the exact calculated future calendar date.\n"
+            "- refused (boolean): true if customer explicitly refuses to pay or demands cancellation (e.g. won't pay, cancel, nahi dunga, cancel karo).\n"
+            f"- clarification_message (string or null): polite question in {lang_style} asking for estimated date if ambiguous.\n"
+            f"- confirmation_message (string or null): polite confirmation in {lang_style} mentioning the date and payment link.\n"
         )
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json"}
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0.1
+            }
         }
-        with httpx.Client(timeout=8.0) as client:
+        with httpx.Client(timeout=10.0) as client:
             resp = client.post(url, json=payload)
             if resp.status_code == 200:
                 import json
                 raw_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 data = json.loads(raw_text)
-                p_date = datetime.strptime(data["promised_date"], "%Y-%m-%d").date() if data.get("promised_date") else None
+                p_date = None
+                if data.get("promised_date"):
+                    try:
+                        p_date = datetime.strptime(data["promised_date"], "%Y-%m-%d").date()
+                    except ValueError:
+                        pass
                 return ParsedCommitment(
-                    has_commitment=data.get("has_commitment", False),
-                    is_ambiguous=data.get("is_ambiguous", False),
+                    has_commitment=bool(data.get("has_commitment", False)),
+                    is_ambiguous=bool(data.get("is_ambiguous", False)),
                     promised_date=p_date,
-                    refused=data.get("refused", False),
+                    refused=bool(data.get("refused", False)),
                     clarification_message=data.get("clarification_message"),
-                    confirmation_message=data.get("confirmation_message")
+                    confirmation_message=data.get("confirmation_message"),
+                    confidence=0.98
                 )
-        raise RuntimeError("Gemini parsing failed")
+            else:
+                raise RuntimeError(f"Gemini API returned status {resp.status_code}: {resp.text}")
+
+
 
 
 llm_service = LLMService()
