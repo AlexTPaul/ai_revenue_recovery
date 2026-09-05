@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # Razorpay Settings (Optional - mock simulator available)
     RAZORPAY_KEY_ID: Optional[str] = None
     RAZORPAY_KEY_SECRET: Optional[str] = None
+    RAZORPAY_WEBHOOK_SECRET: Optional[str] = None
+
 
     model_config = SettingsConfigDict(
         env_file=".env",
